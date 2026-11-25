@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- Typst downloads @preview packages on first use. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Run typst/tinymist installed by Homebrew, MacPorts or cargo. -->
+	<key>com.apple.security.temporary-exception.files.absolute-path.read-only</key>
+	<array>
+		<string>/opt/homebrew/</string>
+		<string>/usr/local/</string>
+		<string>/opt/local/</string>
+		<string>/Volumes/</string>
+	</array>
+	<!-- Read files the document includes (images, #include, #import, bibliographies)
+	     and user fonts. The sandbox only grants access to the previewed file itself. -->
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+	<array>
+		<string>/</string>
+	</array>
+	<!-- Shared Typst package cache, so downloaded packages are reused. -->
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
+	<array>
+		<string>/Library/Caches/typst/</string>
+	</array>
+</dict>
+</plist>
