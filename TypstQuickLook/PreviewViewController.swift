@@ -15,7 +15,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     private static let toolbarInset: CGFloat = 48
 
     private let container = NSView()
-    private let sourceScrollView = NSTextView.scrollableTextView()
+    private let sourceParts = SourceTextView.makeScrollable()
+    private var sourceScrollView: NSScrollView { sourceParts.0 }
+    private var sourceTextView: SourceTextView { sourceParts.1 }
+    private let diagnosticBanner = DiagnosticBanner()
+    private var markers: [SourceMarker] = []
     private let renderedContainer = NSView()
     private let modeControl = NSSegmentedControl(
         labels: ["Preview", "Source"], trackingMode: .selectOne, target: nil, action: nil)
@@ -54,6 +58,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         let toolbar = makeToolbar()
         root.addSubview(toolbar)
 
+        diagnosticBanner.isHidden = true
+        diagnosticBanner.onSelect = { [weak self] index in self?.revealMarker(at: index) }
+        diagnosticBanner.onShowDetails = { [weak self] in self?.setMode(.rendered) }
+        root.addSubview(diagnosticBanner)
+
         NSLayoutConstraint.activate([
             container.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             container.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -62,6 +71,12 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
             toolbar.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             toolbar.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
+
+            diagnosticBanner.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            diagnosticBanner.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -14),
+            diagnosticBanner.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: 14),
+            diagnosticBanner.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -14),
+            diagnosticBanner.widthAnchor.constraint(lessThanOrEqualToConstant: 720),
         ])
 
         let stored = UserDefaults.standard.object(forKey: Self.modeDefaultsKey) as? Int
@@ -75,7 +90,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         sourceScrollView.automaticallyAdjustsContentInsets = false
         sourceScrollView.contentInsets = NSEdgeInsets(top: Self.toolbarInset, left: 0, bottom: 0, right: 0)
 
-        guard let textView = sourceScrollView.documentView as? NSTextView else { return }
+        let textView = sourceTextView
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = true
@@ -120,6 +135,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
     @objc private func modeChanged(_ sender: NSSegmentedControl) {
         guard let newMode = Mode(rawValue: sender.selectedSegment) else { return }
+        setMode(newMode)
+    }
+
+    /// A mode chosen by the user is remembered; automatic switches (on errors) are not.
+    private func setMode(_ newMode: Mode) {
         mode = newMode
         UserDefaults.standard.set(newMode.rawValue, forKey: Self.modeDefaultsKey)
     }
@@ -128,6 +148,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         modeControl.selectedSegment = mode.rawValue
         renderedContainer.isHidden = mode != .rendered
         sourceScrollView.isHidden = mode != .source
+        diagnosticBanner.isHidden = mode != .source || markers.isEmpty
     }
 
     // MARK: QLPreviewingController
@@ -141,7 +162,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         let highlighted = await Task.detached(priority: .userInitiated) {
             UncheckedBox(TypstHighlighter.highlight(text))
         }.value
-        (sourceScrollView.documentView as? NSTextView)?.textStorage?.setAttributedString(highlighted.value)
+        sourceTextView.textStorage?.setAttributedString(highlighted.value)
 
         guard let tool = TypstToolchain.locate() else {
             log.error("Neither typst nor tinymist found")
@@ -174,12 +195,46 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             case .failure(let error):
                 log.error("Rendering \(url.lastPathComponent, privacy: .public) failed: \(String(describing: error), privacy: .public)")
                 self.showRendered(Self.view(for: error, file: url))
+                if case TypstCompileError.failed(_, _, let diagnostics) = error {
+                    self.showDiagnostics(diagnostics, in: text, file: url)
+                }
             }
         }
     }
 
     deinit {
         compileTask?.cancel()
+    }
+
+    // MARK: Diagnostics
+
+    /// Marks the offending lines in the source and switches to it, scrolled to the first error.
+    private func showDiagnostics(_ output: String, in text: String, file: URL) {
+        let found = TypstDiagnostics.markers(for: TypstDiagnostics.parse(output), in: text, file: file)
+        guard found.contains(where: { $0.severity == .error }) else { return } // e.g. error inside a package
+        markers = found
+        log.info("Marked \(found.count) problem(s) in \(file.lastPathComponent, privacy: .public), first at line \(found[0].line)")
+        sourceTextView.setMarkers(found)
+        // Keep the last lines scrollable above the banner.
+        sourceScrollView.contentInsets.bottom = 64
+        diagnosticBanner.show(found)
+        mode = .source
+        // Wait one run loop turn so the scroll view has its final size before scrolling.
+        DispatchQueue.main.async { [weak self] in self?.revealMarker(at: 0) }
+    }
+
+    private func revealMarker(at index: Int) {
+        guard markers.indices.contains(index),
+              let lineRect = sourceTextView.lineRect(for: markers[index].lineRange) else { return }
+        let clipView = sourceScrollView.contentView
+        let topInset = sourceScrollView.contentInsets.top
+        let visibleHeight = clipView.bounds.height - topInset
+        // Place the line at ~40% of the area below the floating mode switch.
+        let target = lineRect.midY - topInset - visibleHeight * 0.4
+        let maxY = max(-topInset, sourceTextView.frame.height - clipView.bounds.height + sourceScrollView.contentInsets.bottom)
+        clipView.scroll(to: NSPoint(x: 0, y: min(max(target, -topInset), maxY)))
+        sourceScrollView.reflectScrolledClipView(clipView)
+        sourceTextView.showFindIndicator(for: markers[index].range)
     }
 
     // MARK: Content helpers

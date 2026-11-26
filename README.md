@@ -5,7 +5,11 @@ A macOS Quick Look extension (pure Swift) that previews Typst documents:
 - **Preview**: the document is rendered to PDF with your local `typst` (preferred) or `tinymist`, shown in PDFKit.
 - **Source**: the Typst source with syntax highlighting (markup, code and math modes).
 - A floating switch at the top toggles between the two views; the last choice is remembered.
-- If neither tool is installed, an instruction page with `brew install typst` / `brew install tinymist` is shown. Compile errors are shown with the compiler's diagnostics.
+- If neither tool is installed, an instruction page with `brew install typst` / `brew install tinymist` is shown.
+- If compilation fails, the preview switches to the source, scrolls to the first error and marks the line
+  (red line background, highlighted span, message as tooltip). A bar at the bottom shows the message,
+  steps through multiple problems and opens the full compiler output (**Details**). Errors inside an
+  `#include`d file are marked at the `#include` line.
 
 ## Build & install
 
